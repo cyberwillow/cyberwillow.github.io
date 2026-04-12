@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Building Resilient Detections for Active Directory Persistence — CyberWillow</title>
+  <link rel="stylesheet" href="../style.css">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=DM+Serif+Display:ital@0;1&family=IBM+Plex+Mono:wght@400;500;600&family=Source+Sans+3:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+</head>
+<body>
+
+  <!-- ═══════════════ NAVIGATION ═══════════════ -->
+  <nav class="nav">
+    <div class="nav__inner">
+      <a href="/" class="nav__brand">
+        <span class="nav__icon">
+          <svg viewBox="0 0 32 32" fill="none" xmlns="http://www.w3.org/2000/svg">
+            <path d="M16 2C16 2 8 8 8 16C8 20.4 11.6 24 16 24C20.4 24 24 20.4 24 16C24 8 16 2 16 2Z" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/>
+            <path d="M16 2V24" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+            <path d="M10 12C12 14 14 15 16 15C18 15 20 14 22 12" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <path d="M9 18C11.5 16 13.5 15.5 16 15.5C18.5 15.5 20.5 16 23 18" stroke="currentColor" stroke-width="1" stroke-linecap="round" opacity="0.5"/>
+            <circle cx="16" cy="28" r="2" stroke="currentColor" stroke-width="1.5"/>
+          </svg>
+        </span>
+        <span class="nav__name">CyberWillow</span>
+      </a>
+      <div class="nav__links">
+        <a href="/" class="nav__link">Blog</a>
+        <a href="/about.html" class="nav__link">About</a>
+        <a href="https://github.com/cyberwillow" class="nav__link nav__link--ext" target="_blank" rel="noopener">
+          GitHub
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none"><path d="M1 9L9 1M9 1H3M9 1V7" stroke="currentColor" stroke-width="1.2"/></svg>
+        </a>
+      </div>
+      <button class="nav__toggle" aria-label="Menu" onclick="document.body.classList.toggle('menu-open')">
+        <span></span><span></span>
+      </button>
+    </div>
+  </nav>
+
+  <!-- ═══════════════ POST HEADER ═══════════════ -->
+  <header class="post-header">
+    <div class="post-header__inner">
+      <a href="/" class="post-header__back">
+        <svg width="16" height="16" viewBox="0 0 16 16" fill="none"><path d="M10 12L6 8L10 4" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"/></svg>
+        All posts
+      </a>
+      <div class="post-header__meta">
+        <time class="post-header__date" datetime="2026-03-21">March 21, 2026</time>
+        <span class="post-header__sep">·</span>
+        <span class="post-header__read">8 min read</span>
+      </div>
+      <span class="post__tag post__tag--detect">Detection Engineering</span>
+      <h1 class="post-header__title">Building Resilient Detections for Active Directory Persistence</h1>
+      <p class="post-header__subtitle">
+        How to craft SIEM detections that survive adversary evasion — covering golden ticket,
+        DCSync, and AdminSDHolder abuse with practical Splunk queries.
+      </p>
+      <div class="post__topics">
+        <span>Active Directory</span>
+        <span>Splunk</span>
+        <span>SIEM</span>
+        <span>detection engineering</span>
+      </div>
+    </div>
+  </header>
+
+  <!-- ═══════════════ POST BODY ═══════════════ -->
+  <main class="post-content">
+    <article class="post-body">
+
+      <p>
+        The problem with most Active Directory detections isn't that they're wrong — it's that they're brittle. A golden ticket alert that fires on RC4 encryption type but not AES is half a detection. A DCSync rule that matches only on the word "DCSync" in a tool name will miss any attacker who writes their own replication client. I've spent years building and tuning AD detections, and the consistent lesson is that durability comes from detecting behavior at multiple layers, not from chasing artifacts that attackers can trivially change.
+      </p>
+      <p>
+        This post covers three high-value AD persistence techniques I see most often in engagements and threat intelligence: golden tickets, DCSync, and AdminSDHolder abuse. For each one, I'll explain the mechanism, show why naive detections fail, and provide Splunk queries that are harder to evade.
+      </p>
+
+      <h2>Golden Ticket (T1558.001)</h2>
+
+      <p>
+        A golden ticket is a forged Kerberos TGT (Ticket-Granting Ticket) signed with the KRBTGT account's NTLM hash. Because the TGT is encrypted with a key only the KDC should know, a domain controller will treat a forged ticket as legitimate — even if it grants access to resources that don't exist, or uses a username that was deleted years ago. Attackers who have compromised the KRBTGT hash can re-enter an environment at will even after a full credential reset, as long as the KRBTGT isn't rotated (which most organizations avoid because of the operational disruption).
+      </p>
+
+      <h3>Why the simple detection fails</h3>
+
+      <p>
+        Most guidance points to Event ID 4769 (Kerberos service ticket request) with <code>TicketEncryptionType = 0x17</code> (RC4-HMAC). The logic: legitimate environments that enforce AES should never see RC4 tickets, so RC4 is suspicious. But attackers know this. Modern tooling like Mimikatz and Rubeus can request AES-encrypted golden tickets. Filtering on encryption type alone is a losing game.
+      </p>
+
+      <h3>Resilient detection approach</h3>
+
+      <p>
+        A more durable signal comes from the ticket lifetime and the account metadata. Legitimate TGTs are constrained by domain policy — typically 10 hours, with 7-day renewal. Attackers often set golden ticket lifetimes to 10 years because the tools default to it, or because they want to avoid having to regenerate them. Additionally, a valid TGT from a non-existent account, or a TGT with a SID that doesn't match the account's actual SID history, is a clear anomaly.
+      </p>
+
+      <pre><code>| Splunk — Golden Ticket anomaly detection |
+
+index=wineventlog EventCode=4769
+| eval ticket_lifetime_hours = (TicketExpirationTime - TicketRequestTime) / 3600
+| where ticket_lifetime_hours > 24
+    OR TicketEncryptionType = "0x17"
+    OR (Status = "0x0" AND NOT [
+        search index=wineventlog EventCode=4768
+        | fields TargetUserName
+    ] )
+| eval risk_score = case(
+    ticket_lifetime_hours > 8760, 100,  /* 1 year+ = critical */
+    ticket_lifetime_hours > 24,   75,
+    TicketEncryptionType="0x17",  60,
+    true(),                        40
+  )
+| stats max(risk_score) as max_risk, values(ServiceName) as services,
+         dc(ServiceName) as svc_count, count by TargetUserName, IpAddress
+| where max_risk >= 60 OR (svc_count > 10 AND max_risk >= 40)
+| sort - max_risk</code></pre>
+
+      <div class="callout callout--tip">
+        <strong>Tuning note</strong>
+        The sub-search checking for a prior 4768 (AS-REQ) filters out forged TGTs that skip the authentication exchange. Legitimate users always have a 4768 before a 4769. Forged golden tickets often don't, because the attacker injects the TGT directly into memory rather than authenticating to the KDC.
+      </div>
+
+      <h2>DCSync (T1003.006)</h2>
+
+      <p>
+        DCSync abuses the Active Directory Replication Service to request password hashes for any account, including KRBTGT and all domain admin accounts. It doesn't require running code on a domain controller — any account with the <em>Replicating Directory Changes</em> and <em>Replicating Directory Changes All</em> permissions (or <em>Replicating Directory Changes In Filtered Set</em> for RODC scenarios) can perform the attack remotely using tools like Mimikatz's <code>lsadump::dcsync</code> or Impacket's <code>secretsdump.py</code>.
+      </p>
+
+      <h3>The event to watch</h3>
+
+      <p>
+        The telltale log is Event ID 4662 on domain controllers — an operation was performed on an Active Directory object. DCSync generates a 4662 with the object type GUID for domain objects (<code>19195a5b-6da0-11d0-afd3-00c04fd930c9</code>) and the access right GUIDs for <em>Replicating Directory Changes</em> (<code>1131f6aa-9c07-11d1-f79f-00c04fc2dcd2</code>) and <em>Replicating Directory Changes All</em> (<code>1131f6ad-9c07-11d1-f79f-00c04fc2dcd2</code>).
+      </p>
+
+      <pre><code>| Splunk — DCSync detection via Event 4662 |
+
+index=wineventlog EventCode=4662
+    Properties="*1131f6aa*" OR Properties="*1131f6ad*"
+| eval is_replication_guid =
+    if(match(Properties,
+       "1131f6aa-9c07-11d1-f79f-00c04fc2dcd2|1131f6ad-9c07-11d1-f79f-00c04fc2dcd2"),
+       1, 0)
+| where is_replication_guid = 1
+| lookup domain_controllers.csv hostname AS SubjectUserName OUTPUT is_dc
+| where isnull(is_dc) OR is_dc != "true"
+| stats count, earliest(_time) as first_seen, latest(_time) as last_seen,
+         values(ObjectName) as objects_accessed
+    by SubjectUserName, SubjectLogonId, IpAddress
+| where count > 0
+| eval alert = "DCSync: non-DC performing directory replication from " . IpAddress
+| sort - count</code></pre>
+
+      <p>
+        The lookup against a known DC list is essential. Legitimate DCs replicate constantly — without filtering them, you'll drown in noise. Build your DC list from SCCM, DNS, or a Splunk lookup table maintained by your identity team.
+      </p>
+
+      <h3>Evasion and layered detection</h3>
+
+      <p>
+        Attackers can reduce 4662 noise by replicating only specific attributes (NTLM hashes via unicodePwd) rather than full object dumps, making the volume anomaly harder to spot. Layer in network detection: DCSync uses MS-DRSR over RPC (port 135 + high dynamic ports). A non-DC host originating MS-DRSR traffic to a DC is high-fidelity signal regardless of what AD logs show.
+      </p>
+
+      <h2>AdminSDHolder Abuse (T1098)</h2>
+
+      <p>
+        AdminSDHolder is an Active Directory container that serves as a permission template for protected groups — Domain Admins, Enterprise Admins, Schema Admins, and others. Every hour (by default), the SDProp process runs and forces the ACL on every protected account to match the AdminSDHolder template. The intended purpose is to prevent ACL drift on privileged accounts. The abusable property: if an attacker modifies the AdminSDHolder ACL to grant a low-privileged account control rights, SDProp will propagate that access to every protected group member automatically within an hour — and will continue to re-apply it even if a defender removes it from the individual accounts.
+      </p>
+
+      <h3>Detection</h3>
+
+      <p>
+        Watch for ACL modifications on the AdminSDHolder object itself. This is Event ID 4662 again, but with the specific Distinguished Name of the AdminSDHolder container and write/modify DACL access rights:
+      </p>
+
+      <pre><code>| Splunk — AdminSDHolder ACL modification |
+
+index=wineventlog EventCode=4662
+    ObjectName="*AdminSDHolder*"
+    AccessMask="0x40000" OR AccessMask="0x20000"  /* WRITE_DAC | WRITE_OWNER */
+| lookup privileged_accounts.csv account AS SubjectUserName OUTPUT is_admin
+| where isnull(is_admin) OR is_admin != "true"
+| table _time, SubjectUserName, SubjectLogonId, IpAddress,
+         ObjectName, AccessMask, Properties
+| eval alert_text = "Non-privileged account modified AdminSDHolder ACL: "
+                    . SubjectUserName . " from " . IpAddress
+| sort - _time</code></pre>
+
+      <p>
+        You should also monitor for the <em>results</em> of SDProp propagation: if a low-privileged account suddenly has ACEs granting it control over Domain Admins members, that's a secondary indicator even if you missed the initial AdminSDHolder modification. Event ID 4670 (permissions on an object were changed) on Domain Admins group members, where the new ACE grants rights to an unexpected account, is worth alerting on.
+      </p>
+
+      <h2>Building for Durability</h2>
+
+      <p>
+        Across all three techniques, the pattern that makes detections resilient is the same: <strong>detect the behavior, not the tool</strong>. Golden ticket detection based on encryption type is detecting Mimikatz's defaults, not the attack. DCSync detection based on the string "dcsync" in a process name is detecting a naming convention. AdminSDHolder detection based on specific tool signatures is detecting the known tools.
+      </p>
+      <p>
+        Behavioral detections — ticket lifetime anomalies, replication from non-DCs, unexpected ACL modifications to protected containers — detect the technique regardless of the tooling. They're also harder to tune away through configuration changes, because the behavior itself is the signal.
+      </p>
+      <p>
+        The other durability principle: every detection should have a documented evasion case and a secondary layer that covers it. If an attacker knows your golden ticket rule fires on RC4, they'll use AES. Your rule should fire on both, or on something they can't change — like the absence of a preceding 4768. Document the evasion surface for every detection you ship. It forces clarity about what you're actually detecting and where the gaps are.
+      </p>
+
+    </article>
+  </main>
+
+  <!-- ═══════════════ POST FOOTER NAV ═══════════════ -->
+  <div class="post-nav">
+    <div class="post-nav__inner">
+      <a href="/posts/cloud-iam-misconfig.html" class="post-nav__link post-nav__link--prev">
+        <span class="post-nav__label">← Previous</span>
+        <span class="post-nav__title">The IAM Misconfiguration Playbook</span>
+      </a>
+      <a href="/posts/supply-chain-attacks-npm.html" class="post-nav__link post-nav__link--next">
+        <span class="post-nav__label">Next →</span>
+        <span class="post-nav__title">Anatomy of an npm Supply Chain Attack</span>
+      </a>
+    </div>
+  </div>
+
+  <!-- ═══════════════ FOOTER ═══════════════ -->
+  <footer class="footer">
+    <div class="footer__inner">
+      <p class="footer__copy">&copy; 2026 CyberWillow. Built with intention.</p>
+      <div class="footer__links">
+        <a href="/rss.xml">RSS</a>
+        <a href="https://github.com/cyberwillow" target="_blank" rel="noopener">GitHub</a>
+        <a href="https://linkedin.com" target="_blank" rel="noopener">LinkedIn</a>
+      </div>
+    </div>
+  </footer>
+
+</body>
+</html>
